@@ -42,6 +42,12 @@ pip install -r requirements.txt
 python -m src.cli prepare
 ```
 
+3. **Divisão determinística por consulta (`train` / `val` / `test`):** gere e salve o mapeamento `query_id -> split` em `data/processed/splits.parquet` agrupado por `query_id` para evitar vazamento de consultas entre os conjuntos:
+
+```bash
+python -m src.cli split
+```
+
 ### Tratamentos aplicados na etapa `prepare`
 * **Padronização de esquema:** correção do nome da coluna `category hierarchy` para `category_hierarchy` e tipagem explícita de identificadores (`product_id` e `query_id` como `int64`) para garantir integridade nos cruzamentos.
 * **Saneamento de texto:** substituição de valores nulos por strings vazias (`""`) e normalização de quebras de linha/espaços excedentes, evitando tokens artificiais (`"nan"`) sem perder capitalização original.

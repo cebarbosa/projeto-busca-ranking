@@ -4,7 +4,9 @@ import argparse
 from pathlib import Path
 
 from src.data import materialize_processed
-from src.paths import PROC_DIR, RAW_DIR
+from src.split import materialize_splits
+from src.paths import ARTIFACTS_DIR, PROC_DIR, RAW_DIR
+from src.pipeline import DEFAULT_MODEL_PATH, run_training_pipeline
 
 
 def _cmd_prepare(args: argparse.Namespace) -> None:
@@ -30,6 +32,30 @@ def _cmd_search(args: argparse.Namespace) -> None:
     print(f"Query accepted: {query!r} (top_k={args.top_k})")
 
 
+def _cmd_split(args: argparse.Namespace) -> None:
+    splits = materialize_splits(
+        proc_dir=Path(args.proc_dir),
+        val_size=args.val_size,
+        test_size=args.test_size,
+        random_state=args.random_state,
+    )
+    print("Splits materialized:")
+    print(splits["split"].value_counts().to_dict())
+
+def _cmd_train(args: argparse.Namespace) -> None:
+    summary = run_training_pipeline(
+        proc_dir=Path(args.proc_dir),
+        model_path=Path(args.model_path),
+        top_k=args.top_k,
+    )
+    print("Training complete:")
+    print(f"  Model saved:       {summary['model_path']}")
+    print(f"  Features used:     {summary['num_features']}")
+    print(f"  Val retrieval:     {summary['val_retrieval']}")
+    print(f"  Val BM25 NDCG@10:  {summary['val_bm25_ranking']['ndcg@10']:.4f}")
+    print(f"  Val LGBM NDCG@10:  {summary['val_lgbm_ranking']['ndcg@10']:.4f}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="search-ranking",
@@ -53,6 +79,40 @@ def build_parser() -> argparse.ArgumentParser:
     search_parser.add_argument("--top-k", type=int, default=10, help="Number of results to display.")
     search_parser.add_argument("--max-length", type=int, default=512, help="Max allowed query length.")
     search_parser.set_defaults(func=_cmd_search)
+
+    # Split parser
+    split_parser = subparsers.add_parser(
+        "split",
+        help="Generate deterministic train/val/test query splits.",
+    )
+    split_parser.add_argument("--proc-dir", default=str(PROC_DIR), help="Processed data directory.")
+    split_parser.add_argument("--val-size", type=float, default=0.15, help="Validation query fraction.")
+    split_parser.add_argument("--test-size", type=float, default=0.15, help="Test query fraction.")
+    split_parser.add_argument("--random-state", type=int, default=42, help="Random seed.")
+    split_parser.set_defaults(func=_cmd_split)
+
+    # Training parser
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Run candidate retrieval, feature generation, and LightGBM ranker training.",
+    )
+    train_parser.add_argument(
+        "--proc-dir",
+        default=str(PROC_DIR),
+        help="Processed data directory.",
+    )
+    train_parser.add_argument(
+        "--model-path",
+        default=str(DEFAULT_MODEL_PATH),
+        help="Output path for trained ranker artifact.",
+    )
+    train_parser.add_argument(
+        "--top-k",
+        type=int,
+        default=100,
+        help="Candidate cutoff per query.",
+    )
+    train_parser.set_defaults(func=_cmd_train)
 
     return parser
 
