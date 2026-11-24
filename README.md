@@ -20,6 +20,7 @@ Projeto de busca de produtos de ponta a ponta construído sobre o dataset **WAND
 │   └── cli.py                # Interface de linha de comando (CLI)
 ├── README.md
 └── requirements.txt
+```
 
 
 ## Configuração do Ambiente

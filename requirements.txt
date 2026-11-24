@@ -1,0 +1,11 @@
+numpy
+pandas
+pyarrow
+scipy
+scikit-learn
+lightgbm
+rank-bm25
+sentence-transformers
+tqdm
+jupyter
+ipykernel
