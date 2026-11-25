@@ -13,29 +13,31 @@ Projeto de busca e ordenação de produtos de ponta a ponta construído sobre o 
 
 ## Estrutura do Projeto
 
+```text
+.
 ├── artifacts/
-│   └── hgb_ranker.joblib                  # Modelo treinado (28 features) e lista de colunas utilizadas
-├── config.yaml                            # Configuração centralizada (seeds, splits, top_k, limites e modelo)
+│   └── hgb_ranker.joblib                   # Modelo treinado (28 features) e lista de colunas utilizadas
+├── config.yaml                             # Configuração centralizada (seeds, splits, top_k, limites e modelo)
 ├── data/
-│   ├── raw/                               # Arquivos originais do WANDS separados por tabulação (\t)
-│   └── processed/                         # Camada tratada em Parquet (products, queries, labels, splits)
+│   ├── raw/                                # Arquivos originais do WANDS separados por tabulação (\t)
+│   └── processed/                          # Camada tratada em Parquet (products, queries, labels, splits)
 ├── notebooks/
-│   ├── ...                                # EDA, experimentos e avaliação no dataset WANDS
-│   └── 03_latency_and_error_analysis.ipynb # Benchmark de latência, indexação e análise de erros
+│   ├── ...                                 # EDA, experimentos e avaliação no dataset WANDS
+│   └── 03_latency_and_error_analysis.ipynb  # Benchmark de latência, indexação e análise de erros
 ├── src/
-│   ├── config.py                          # Leitura e validação da configuração centralizada
-│   ├── paths.py                           # Centralização de caminhos relativos do projeto
-│   ├── data.py                            # Leitura bruta, saneamento e materialização da camada tratada
-│   ├── split.py                           # Divisão determinística agrupada por query_id (train/val/test)
-│   ├── validate_query.py                  # Validação e saneamento de consultas de entrada (vazias/longas)
-│   ├── retrieval.py                       # Recuperação lexical com BM25 e indexação do catálogo
-│   ├── features.py                        # Engenharia de 28 features de recuperação, sobreposição e catálogo
-│   ├── ranking.py                         # Fábrica de modelos, treinamento, carregamento e inferência
-│   ├── evaluation.py                      # Métricas de recuperação (Recall@K) e ranking (NDCG@K)
-│   ├── pipeline.py                        # Orquestração treino/avaliação e busca ponta a ponta
-│   └── cli.py                             # Interface de linha de comando (CLI)
+│   ├── config.py                           # Leitura e validação da configuração centralizada
+│   ├── paths.py                            # Centralização de caminhos relativos do projeto
+│   ├── data.py                             # Leitura bruta, saneamento e materialização da camada tratada
+│   ├── split.py                            # Divisão determinística agrupada por query_id (train/val/test)
+│   ├── validate_query.py                   # Validação e saneamento de consultas de entrada (vazias/longas)
+│   ├── retrieval.py                        # Recuperação lexical com BM25 e indexação do catálogo
+│   ├── features.py                         # Engenharia de 28 features de recuperação, sobreposição e catálogo
+│   ├── ranking.py                          # Fábrica de modelos, treinamento, carregamento e inferência
+│   ├── evaluation.py                       # Métricas de recuperação (Recall@K) e ranking (NDCG@K)
+│   ├── pipeline.py                         # Orquestração treino/avaliação e busca ponta a ponta
+│   └── cli.py                              # Interface de linha de comando (CLI)
 ├── tests/
-│   └── test_search_ranking.py             # Testes unitários e de integração com pytest
+│   └── test_search_ranking.py              # Testes unitários e de integração com pytest
 ├── README.md
 └── requirements.txt
 
