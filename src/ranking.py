@@ -85,18 +85,14 @@ def train_ranker(
 
 
 def score_candidates(
-    ranker: Any,
+    model: Any,
     df: pd.DataFrame,
-    feature_cols: list[str],
+    feature_cols: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Attach predicted ranking scores to candidate rows."""
     scored = df.copy()
-    if scored.empty:
-        scored["score"] = pd.Series(dtype="float64")
-        return scored
-
-    x_mat = _prepare_matrix(scored, feature_cols)
-    scored["score"] = np.asarray(ranker.predict(x_mat), dtype=np.float64)
+    cols = feature_cols or list(getattr(model, "feature_names_in_", []))
+    X = scored[cols] if cols else scored
+    scored["score"] = model.predict(X)
     return scored
 
 
