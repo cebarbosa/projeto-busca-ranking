@@ -40,6 +40,7 @@ Projeto de busca e ordenação de produtos de ponta a ponta construído sobre o 
 │   └── test_search_ranking.py              # Testes unitários e de integração com pytest
 ├── README.md
 └── requirements.txt
+```
 
 ---
 
