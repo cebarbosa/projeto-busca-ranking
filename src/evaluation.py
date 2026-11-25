@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import Any
 import numpy as np
 import pandas as pd
+
+from .config import load_config
 
 
 RELEVANCE_MAP: dict[str, int] = {
@@ -14,9 +17,20 @@ RELEVANCE_MAP: dict[str, int] = {
 def map_relevance(
     labels: pd.Series,
     mapping: dict[str, int] | None = None,
+    cfg: dict[str, Any] | None = None,
 ) -> pd.Series:
     """Map WANDS label strings ('Exact', 'Partial', 'Irrelevant') to numeric grades."""
-    active_map = RELEVANCE_MAP if mapping is None else mapping
+    if mapping is not None:
+        active_map = mapping
+    else:
+        config = cfg or load_config()
+        cfg_map = config.get("data", {}).get("relevance_map")
+        if cfg_map:
+            # Normalize keys to Title Case ('exact' -> 'Exact') so it works either way
+            active_map = {str(k).capitalize(): int(v) for k, v in cfg_map.items()}
+        else:
+            active_map = RELEVANCE_MAP
+
     return labels.map(active_map).fillna(0).astype(int)
 
 

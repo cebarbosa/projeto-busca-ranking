@@ -1,129 +1,126 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
 import joblib
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMRanker
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import Ridge
+from sklearn.pipeline import make_pipeline
 
-from .evaluation import evaluate_ranking
+from src.config import load_config
+
+MODEL_BUILDERS = {
+    "hist_gradient_boosting": lambda params: HistGradientBoostingRegressor(**params),
+    "ridge": lambda params: make_pipeline(SimpleImputer(strategy="median"), Ridge(**params)),
+}
 
 
-NON_FEATURE_COLS = {"query_id", "product_id", "relevance", "score", "rank"}
+NON_FEATURE_COLS = {
+    "query_id",
+    "product_id",
+    "label",
+    "relevance",
+    "split",
+    "query",
+    "title",
+    "product_title",
+    "description",
+    "product_description",
+    "category",
+    "product_category",
+}
 
 
 def get_feature_columns(df: pd.DataFrame) -> list[str]:
-    """Select numeric/boolean ranking feature columns excluding IDs, targets, and rank/score outputs."""
-    cols = [c for c in df.columns if c not in NON_FEATURE_COLS]
-    numeric_cols = [
-        c for c in cols if pd.api.types.is_numeric_dtype(df[c]) or pd.api.types.is_bool_dtype(df[c])
-    ]
-    if not numeric_cols:
-        raise ValueError("No valid numeric feature columns found in ranking DataFrame.")
-    return numeric_cols
+    """Return numeric/boolean feature columns excluding identifiers, text, and targets."""
+    cols: list[str] = []
+    for col in df.columns:
+        if col in NON_FEATURE_COLS:
+            continue
+        if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_bool_dtype(df[col]):
+            cols.append(col)
+    if not cols:
+        raise ValueError("No valid feature columns found in ranking DataFrame.")
+    return cols
 
 
-def _prepare_grouped_data(
-    df: pd.DataFrame,
-    feature_cols: list[str],
-    require_relevance: bool = True,
-) -> tuple[pd.DataFrame, np.ndarray | None, list[int]]:
-    """Sort by query_id deterministically and compute group sizes for LightGBM."""
-    if "query_id" not in df.columns:
-        raise ValueError("DataFrame must include 'query_id'.")
-    if require_relevance and "relevance" not in df.columns:
-        raise ValueError("DataFrame must include 'relevance' for supervised ranking.")
-
-    ordered = df.sort_values(["query_id", "product_id"] if "product_id" in df.columns else ["query_id"])
-    ordered = ordered.reset_index(drop=True)
-
-    group_sizes = ordered.groupby("query_id", sort=False).size().astype(int).tolist()
-    x = ordered[feature_cols].copy()
-    y = ordered["relevance"].to_numpy(dtype=np.int64) if require_relevance else None
-    return x, y, group_sizes
+def _prepare_matrix(df: pd.DataFrame, feature_cols: list[str]) -> np.ndarray:
+    """Convert selected feature columns into a clean float64 numpy array."""
+    x = df[feature_cols].copy()
+    for col in feature_cols:
+        if pd.api.types.is_bool_dtype(x[col]):
+            x[col] = x[col].astype(np.float64)
+        else:
+            x[col] = pd.to_numeric(x[col], errors="coerce").astype(np.float64)
+    return np.ascontiguousarray(x.to_numpy(dtype=np.float64))
 
 
 def train_ranker(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame | None = None,
     feature_cols: list[str] | None = None,
-    params: dict | None = None,
-) -> tuple[LGBMRanker, list[str]]:
-    """Train a query-grouped LightGBM ranker on train_df (with optional val_df evaluation)."""
-    cols = get_feature_columns(train_df) if feature_cols is None else feature_cols
+    target_col: str = "relevance",
+    model_name: str | None = None,
+    cfg: dict[str, Any] | None = None,
+) -> tuple[Any, list[str], dict[str, Any]]:
+    cfg = cfg or load_config()
+    ranking_cfg = cfg["ranking"]
+    selected_name = model_name or ranking_cfg["active_model"]
+    model_cfg = ranking_cfg["models"][selected_name]
 
-    x_train, y_train_raw, train_groups_raw = _prepare_grouped_data(
-        train_df, cols, require_relevance=True
-    )
-    if y_train_raw is None:
-        raise ValueError("Training data requires relevance labels.")
+    cols = feature_cols or get_feature_columns(train_df)
+    model = build_ranker(model_cfg)
+    model.fit(train_df[cols], train_df[target_col])
 
-    print(x_train.dtypes[x_train.dtypes == "object"])
-    print("Any inf in X:", np.isinf(x_train.select_dtypes(include=[np.number])).any().any())
-
-    y_train = np.ascontiguousarray(y_train_raw, dtype=np.int32)
-    train_groups = np.ascontiguousarray(train_groups_raw, dtype=np.int32)
-
-    default_params = {
-        "objective": "lambdarank",
-        "metric": "ndcg",
-        "eval_at": [10],
-        "learning_rate": 0.05,
-        "num_leaves": 31,
-        "min_child_samples": 20,
-        "n_estimators": 300,
-        "random_state": 42,
-        "n_jobs": 4,
-        "verbose": -1,
+    meta = {
+        "model_name": selected_name,
+        "model_type": model_cfg["type"],
+        "params": model_cfg.get("params", {}),
     }
-    if params:
-        default_params.update(params)
-
-    ranker = LGBMRanker(**default_params)
-
-    fit_kwargs: dict = {
-        "X": x_train,
-        "y": y_train,
-        "group": train_groups,
-    }
-
-    if val_df is not None and not val_df.empty:
-        x_val, y_val_raw, val_groups_raw = _prepare_grouped_data(
-            val_df, cols, require_relevance=True
-        )
-        if y_val_raw is not None:
-            fit_kwargs["eval_X"] = x_val
-            fit_kwargs["eval_y"] = np.ascontiguousarray(y_val_raw, dtype=np.int32)
-            fit_kwargs["eval_group"] = [np.ascontiguousarray(val_groups_raw, dtype=np.int32)]
-
-    ranker.fit(**fit_kwargs)
-    return ranker, cols
+    return model, cols, meta
 
 
 def score_candidates(
-    ranker: LGBMRanker,
+    ranker: Any,
     df: pd.DataFrame,
     feature_cols: list[str],
 ) -> pd.DataFrame:
-    """Predict ranking scores per candidate row and sort descending within each query_id."""
-    x, _, _ = _prepare_grouped_data(df, feature_cols, require_relevance=False)
-    scored = df.sort_values(["query_id", "product_id"] if "product_id" in df.columns else ["query_id"]).reset_index(drop=True)
-    scored = scored.copy()
-    scored["score"] = ranker.predict(x).astype(np.float64)
-    scored = scored.sort_values(["query_id", "score"], ascending=[True, False]).reset_index(drop=True)
-    scored["rank"] = scored.groupby("query_id", sort=False).cumcount() + 1
+    """Attach predicted ranking scores to candidate rows."""
+    scored = df.copy()
+    if scored.empty:
+        scored["score"] = pd.Series(dtype="float64")
+        return scored
+
+    x_mat = _prepare_matrix(scored, feature_cols)
+    scored["score"] = np.asarray(ranker.predict(x_mat), dtype=np.float64)
     return scored
 
 
-def save_ranker(ranker: LGBMRanker, feature_cols: list[str], path: str | Path) -> Path:
-    """Persist trained ranker and feature column list to disk."""
-    out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"model": ranker, "feature_cols": feature_cols}, out_path)
-    return out_path
+def save_ranker(
+    model: Any,
+    feature_cols: list[str],
+    output_path: Path | str,
+    meta: dict[str, Any] | None = None,
+) -> Path:
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "model": model,
+        "feature_cols": feature_cols,
+        "meta": meta or {},
+    }
+    joblib.dump(payload, path)
+    return path
 
 
-def load_ranker(path: str | Path) -> tuple[LGBMRanker, list[str]]:
-    """Load persisted ranker and feature column list from disk."""
-    payload = joblib.load(Path(path))
-    return payload["model"], payload["feature_cols"]
+def load_ranker(artifact_path: Path | str) -> tuple[Any, list[str]]:
+    obj = joblib.load(Path(artifact_path))
+    if isinstance(obj, dict):
+        return obj["model"], obj["feature_cols"]
+    if isinstance(obj, tuple) and len(obj) == 2:
+        return obj[0], obj[1]
+    raise ValueError(f"Unrecognized ranker artifact format at {artifact_path}")

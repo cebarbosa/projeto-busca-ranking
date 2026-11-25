@@ -1,0 +1,38 @@
+seed: 42
+
+data:
+  relevance_map:
+    exact: 2
+    partial: 1
+    irrelevant: 0
+
+split:
+  seed: 42
+  train_ratio: 0.70
+  val_ratio: 0.15
+  test_ratio: 0.15
+
+query_validation:
+  max_chars: 256
+
+retrieval:
+  top_k: 100
+
+ranking:
+  active_model: "hgb_default"
+  artifact_dir: "artifacts"
+  models:
+    hgb_default:
+      type: "hist_gradient_boosting"
+      artifact_name: "hgb_ranker.joblib"
+      params:
+        max_iter: 200
+        learning_rate: 0.05
+        max_leaf_nodes: 31
+        min_samples_leaf: 20
+        random_state: 42
+    ridge_baseline:
+      type: "ridge"
+      artifact_name: "ridge_ranker.joblib"
+      params:
+        alpha: 1.0
