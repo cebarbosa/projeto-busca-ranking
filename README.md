@@ -24,7 +24,7 @@ Projeto de busca e ordenação de produtos de ponta a ponta construído sobre o 
 ├── notebooks/
 │   ├── 00_initial_eda.ipynb                # Análise exploratória inicial do catálogo, consultas e rótulos WANDS
 │   ├── 01_retrieval_experiments.ipynb      # Experimentos de recuperação lexical e avaliação de Recall@K (BM25)
-│   ├── 02_ranking_experiments.ipynb        # Engenharia de features, estudo de ablação (val) e teste one-shot                            # EDA, experimentos e avaliação no dataset WANDS
+│   ├── 02_ranking_experiments.ipynb        # Engenharia de features, estudo de ablação (val) e teste one-shot                           
 │   └── 03_latency_and_error_analysis.ipynb  # Benchmark de latência, indexação e análise de erros
 ├── src/
 │   ├── config.py                           # Leitura e validação da configuração centralizada
