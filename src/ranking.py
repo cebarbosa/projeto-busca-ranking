@@ -124,3 +124,18 @@ def load_ranker(artifact_path: Path | str) -> tuple[Any, list[str]]:
     if isinstance(obj, tuple) and len(obj) == 2:
         return obj[0], obj[1]
     raise ValueError(f"Unrecognized ranker artifact format at {artifact_path}")
+
+def build_ranker(model_cfg: dict[str, Any] | None = None) -> Any:
+    cfg = model_cfg or {}
+    model_type = cfg.get("type", cfg.get("model_type", "hist_gradient_boosting"))
+
+    params = {
+        k: v
+        for k, v in cfg.items()
+        if k not in {"type", "model_type", "name"}
+    }
+
+    if model_type in {"hist_gradient_boosting", "hgb", "HistGradientBoostingRegressor"}:
+        return HistGradientBoostingRegressor(**params)
+
+    raise ValueError(f"Unsupported ranker model type: {model_type}")
