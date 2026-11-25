@@ -82,7 +82,7 @@ def test_retrieval_and_ranking_end_to_end():
     feat_cols = get_feature_columns(feat_df)
     assert len(feat_cols) > 0
 
-    model, used_cols = train_ranker(feat_df, val_df=feat_df, feature_cols=feat_cols)
+    model, used_cols, _ = train_ranker(feat_df, val_df=feat_df, feature_cols=feat_cols)
     scored = score_candidates(model, feat_df, used_cols)
     assert "score" in scored.columns
     assert scored["score"].notna().all()
@@ -149,7 +149,7 @@ def test_ranking_handles_nan_catalog_features():
     feat_df = build_ranking_features(cands, queries, products, labels=labels)
     feat_cols = get_feature_columns(feat_df)
 
-    model, used_cols = train_ranker(feat_df, val_df=feat_df, feature_cols=feat_cols)
+    model, used_cols, _ = train_ranker(feat_df, val_df=feat_df, feature_cols=feat_cols)
     scored = score_candidates(model, feat_df, used_cols)
     assert scored["score"].notna().all()
 
