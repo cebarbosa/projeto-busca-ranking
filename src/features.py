@@ -33,6 +33,7 @@ def build_ranking_features(
     queries: pd.DataFrame,
     products: pd.DataFrame,
     labels: pd.DataFrame | None = None,
+    only_judged: bool = False,
 ) -> pd.DataFrame:
     """Build query-product ranking features from retrieval candidates and catalog tables.
 
@@ -155,8 +156,16 @@ def build_ranking_features(
         lbl_sub["query_id"] = lbl_sub["query_id"].astype("int64")
         lbl_sub["product_id"] = lbl_sub["product_id"].astype("int64")
         lbl_sub["relevance"] = lbl_sub["relevance"].astype("int64")
+        lbl_sub["_is_judged"] = 1
+
         df = df.merge(lbl_sub, on=["query_id", "product_id"], how="left")
+        df["_is_judged"] = df["_is_judged"].fillna(0).astype("int8")
         df["relevance"] = df["relevance"].fillna(0).astype("int64")
+
+        if only_judged:
+            df = df[df["_is_judged"] == 1].copy()
+
+        df = df.drop(columns=["_is_judged"])
 
     # Drop raw long text columns from final feature matrix if not needed downstream
     drop_raw_cols = [

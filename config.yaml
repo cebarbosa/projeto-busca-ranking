@@ -16,7 +16,43 @@ query_validation:
   max_chars: 256
 
 retrieval:
+  mode: "hybrid" # "bm25" | "dense" | "hybrid"
   top_k: 100
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  dense_model: "sentence-transformers/all-MiniLM-L6-v2"
+  dense_batch_size: 128
+  rrf_k: 60
+  pool_multiplier: 2
+
+features:
+  selected_columns:
+    # Retrieval & score dispersion
+    - score
+    - rank
+    - bm25_diff_from_max
+    - bm25_diff_from_mean
+    # Product metadata & popularity
+    - average_rating
+    - rating_count
+    - has_rating
+    - name_char_len
+    - desc_char_len
+    # Query & lexical/semantic overlap features
+    - query_token_count
+    - name_token_overlap
+    - name_query_coverage
+    - name_jaccard
+    - name_exact_query_match
+    - class_jaccard
+    - class_exact_query_match
+    - cat_jaccard
+    - cat_exact_query_match
+  # Dropped by correlation/redundancy selection:
+  # - rating_count group: log1p_rating_count, review_count, log1p_review_count
+  # - rank group: reciprocal_rank
+  # - class_jaccard group: class_query_coverage, class_token_overlap
+  # - cat_jaccard group: cat_query_coverage, cat_token_overlap
 
 ranking:
   active_model: "hgb_default"

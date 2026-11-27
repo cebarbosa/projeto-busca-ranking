@@ -145,23 +145,44 @@ def _cmd_split(args: argparse.Namespace) -> None:
     print(splits["split"].value_counts().to_dict())
 
 
+def _format_ndcg10(metrics: dict[str, Any] | None) -> str:
+    if not metrics or "ndcg@10" not in metrics:
+        return "N/A"
+    return f"{float(metrics['ndcg@10']):.4f}"
+
+
 def _cmd_train(args: argparse.Namespace) -> None:
     cfg = load_config()
-    proc_dir = Path(args.proc_dir) if args.proc_dir is not None else PROC_DIR
-    model_path = Path(args.model_path) if args.model_path is not None else None
+    proc_dir = Path(args.proc_dir) if getattr(args, "proc_dir", None) is not None else PROC_DIR
+    model_path = Path(args.model_path) if getattr(args, "model_path", None) is not None else None
+
+    no_cache = bool(getattr(args, "no_cache", False))
+    use_cache = False if no_cache else bool(getattr(args, "use_cache", True))
+
+    cache_raw = getattr(args, "embedding_cache_path", None)
+    embedding_cache_path = Path(cache_raw) if cache_raw is not None else None
 
     summary = run_training_pipeline(
         proc_dir=proc_dir,
         model_path=model_path,
-        top_k=args.top_k,
+        top_k=getattr(args, "top_k", None),
+        bm25_k1=getattr(args, "bm25_k1", None),
+        bm25_b=getattr(args, "bm25_b", None),
+        model_name=getattr(args, "model_name", None),
+        retrieval_mode=getattr(args, "retrieval_mode", None),
+        embedding_cache_path=embedding_cache_path,
+        use_cache=use_cache,
         cfg=cfg,
     )
+
     print("Training complete:")
     print(f"  Model saved:         {summary['model_path']}")
+    print(f"  Model name:          {summary.get('model_name')}")
+    print(f"  Retrieval mode:      {summary.get('retrieval_mode')}")
     print(f"  Features used:       {summary['num_features']}")
     print(f"  Val retrieval:       {summary['val_retrieval']}")
-    print(f"  Val BM25 NDCG@10:    {summary['val_bm25_ranking']['ndcg@10']:.4f}")
-    print(f"  Val Ranker NDCG@10:  {summary['val_ranker_ranking']['ndcg@10']:.4f}")
+    print(f"  Val Stage-1 NDCG@10: {_format_ndcg10(summary.get('val_bm25_ranking'))}")
+    print(f"  Val Ranker NDCG@10:  {_format_ndcg10(summary.get('val_ranker_ranking'))}")
 
 
 def build_parser() -> argparse.ArgumentParser:

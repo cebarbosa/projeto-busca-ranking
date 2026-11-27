@@ -7,3 +7,7 @@ pyyaml
 pytest
 jupyter
 ipykernel
+sentence-transformers
+matplotlib
+feature_engine
+tqdm

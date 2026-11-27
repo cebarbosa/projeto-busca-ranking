@@ -10,12 +10,32 @@ from src.evaluation import evaluate_ranking, evaluate_retrieval, map_relevance
 from src.features import build_ranking_features
 from src.paths import ARTIFACTS_DIR, PROC_DIR, PROJECT_ROOT
 from src.ranking import save_ranker, score_candidates, train_ranker
-from src.retrieval import BM25Retriever
+from src.retrieval import BM25Retriever, DenseEmbeddingRetriever, HybridRetriever
 
 
 DEFAULT_MODEL_PATH = ARTIFACTS_DIR / "hgb_ranker.joblib"
 
 
+def _resolve_artifact_path(raw_path: Path | str, default_dir: Path = ARTIFACTS_DIR) -> Path:
+    path = Path(raw_path)
+    if path.is_absolute():
+        return path
+    if len(path.parts) > 1 and path.parts[0] == default_dir.name:
+        return PROJECT_ROOT / path
+    return default_dir / path
+
+
+def _default_embedding_cache_path(
+    dense_model: str,
+    retrieval_cfg: dict[str, Any],
+) -> Path:
+    configured = retrieval_cfg.get("embedding_cache_path") or retrieval_cfg.get("cache_path")
+    if configured:
+        return _resolve_artifact_path(configured, ARTIFACTS_DIR)
+    safe_model_name = dense_model.replace("/", "__")
+    return ARTIFACTS_DIR / f"dense_embeddings_{safe_model_name}.npz"
+
+
 def _resolve_model_path(
     model_path: Path | str | None,
     model_name: str | None,
@@ -42,30 +62,101 @@ def _resolve_model_path(
     return DEFAULT_MODEL_PATH
 
 
-def _resolve_model_path(
-    model_path: Path | str | None,
-    model_name: str | None,
+def _resolve_selected_features(
+    df: pd.DataFrame,
     config: dict[str, Any],
-) -> Path:
-    if model_path is not None:
-        return Path(model_path)
+    feature_cols: list[str] | None = None,
+    target_col: str = "relevance",
+) -> list[str]:
+    id_and_target = {"query_id", "product_id", "label", "split", target_col}
 
-    ranking_cfg = config.get("ranking") or {}
-    active_name = model_name or ranking_cfg.get("active_model")
-    models_cfg = ranking_cfg.get("models") or {}
-
-    if active_name and isinstance(models_cfg.get(active_name), dict):
-        artifact_name = models_cfg[active_name].get("artifact_name", f"{active_name}.joblib")
-        artifact_dir_raw = ranking_cfg.get("artifact_dir")
-        if artifact_dir_raw:
-            artifact_dir = Path(artifact_dir_raw)
-            if not artifact_dir.is_absolute():
-                artifact_dir = PROJECT_ROOT / artifact_dir
+    if feature_cols is not None:
+        candidates = list(feature_cols)
+    else:
+        feat_cfg = config.get("features") or {}
+        configured = feat_cfg.get("selected_columns")
+        if isinstance(configured, list) and configured:
+            candidates = list(configured)
         else:
-            artifact_dir = ARTIFACTS_DIR
-        return artifact_dir / artifact_name
+            candidates = [
+                c
+                for c in df.columns
+                if c not in id_and_target and pd.api.types.is_numeric_dtype(df[c])
+            ]
 
-    return DEFAULT_MODEL_PATH
+    selected: list[str] = []
+    seen: set[str] = set()
+    for col in candidates:
+        if col in df.columns and col not in id_and_target and col not in seen:
+            seen.add(col)
+            selected.append(col)
+
+    if not selected:
+        raise ValueError("No valid selected feature columns found in feature DataFrame.")
+    return selected
+
+
+def _subset_feature_df(
+    df: pd.DataFrame,
+    selected_cols: list[str],
+    target_col: str = "relevance",
+) -> pd.DataFrame:
+    dedup_df = df.loc[:, ~df.columns.duplicated()].copy()
+    keep_cols = list(
+        dict.fromkeys(
+            [c for c in ("query_id", "product_id") if c in dedup_df.columns]
+            + [c for c in selected_cols if c in dedup_df.columns]
+            + ([target_col] if target_col in dedup_df.columns else [])
+        )
+    )
+    return dedup_df[keep_cols]
+
+
+def _build_retriever(
+    retrieval_cfg: dict[str, Any],
+    bm25_k1: float,
+    bm25_b: float,
+    retrieval_mode: str | None = None,
+    cache_path: Path | str | None = None,
+    use_cache: bool = True,
+) -> BM25Retriever | DenseEmbeddingRetriever | HybridRetriever:
+    mode = str(retrieval_mode or retrieval_cfg.get("mode", "hybrid")).strip().lower()
+    dense_model = str(retrieval_cfg.get("dense_model", "sentence-transformers/all-MiniLM-L6-v2"))
+    dense_batch_size = int(retrieval_cfg.get("dense_batch_size", 128))
+    rrf_k = int(retrieval_cfg.get("rrf_k", 60))
+    pool_multiplier = int(retrieval_cfg.get("pool_multiplier", 2))
+    resolved_cache_path = (
+        Path(cache_path)
+        if cache_path is not None
+        else _default_embedding_cache_path(dense_model, retrieval_cfg)
+    )
+
+    bm25 = BM25Retriever(k1=bm25_k1, b=bm25_b)
+
+    if mode == "bm25":
+        return bm25
+    if mode == "dense":
+        return DenseEmbeddingRetriever(
+            model_name=dense_model,
+            batch_size=dense_batch_size,
+            cache_path=resolved_cache_path,
+            use_cache=use_cache,
+        )
+    if mode == "hybrid":
+        dense = DenseEmbeddingRetriever(
+            model_name=dense_model,
+            batch_size=dense_batch_size,
+            cache_path=resolved_cache_path,
+            use_cache=use_cache,
+        )
+        return HybridRetriever(
+            bm25_retriever=bm25,
+            dense_retriever=dense,
+            rrf_k=rrf_k,
+            pool_multiplier=pool_multiplier,
+        )
+
+    raise ValueError(f"Unsupported retrieval mode: {mode}. Expected 'bm25', 'dense', or 'hybrid'.")
 
 
 def run_training_pipeline(
@@ -75,6 +166,10 @@ def run_training_pipeline(
     bm25_k1: float | None = None,
     bm25_b: float | None = None,
     model_name: str | None = None,
+    retrieval_mode: str | None = None,
+    embedding_cache_path: Path | str | None = None,
+    use_cache: bool = True,
+    feature_cols: list[str] | None = None,
     cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Train the two-stage retrieval and ranker model from config and save artifact."""
@@ -83,6 +178,7 @@ def run_training_pipeline(
     ranking_cfg = config.get("ranking") or {}
     models_cfg = ranking_cfg.get("models") or {}
 
+    resolved_mode = str(retrieval_mode or retrieval_cfg.get("mode", "hybrid")).strip().lower()
     resolved_top_k = int(top_k if top_k is not None else retrieval_cfg.get("top_k", 100))
     resolved_k1 = float(bm25_k1 if bm25_k1 is not None else retrieval_cfg.get("bm25_k1", 1.5))
     resolved_b = float(bm25_b if bm25_b is not None else retrieval_cfg.get("bm25_b", 0.75))
@@ -122,7 +218,15 @@ def run_training_pipeline(
     train_labels = labels[labels["query_id"].isin(train_qids)]
     val_labels = labels[labels["query_id"].isin(val_qids)]
 
-    retriever = BM25Retriever(k1=resolved_k1, b=resolved_b).fit(products)
+    retriever = _build_retriever(
+        retrieval_cfg=retrieval_cfg,
+        bm25_k1=resolved_k1,
+        bm25_b=resolved_b,
+        retrieval_mode=resolved_mode,
+        cache_path=embedding_cache_path,
+        use_cache=use_cache,
+    ).fit(products)
+
     train_candidates = retriever.retrieve(train_queries, top_k=resolved_top_k)
     val_candidates = retriever.retrieve(val_queries, top_k=resolved_top_k)
 
@@ -142,21 +246,42 @@ def run_training_pipeline(
         labels=val_labels,
     )
 
-    bm25_val_scored = val_feat[["query_id", "bm25_score", "relevance"]].rename(
-        columns={"bm25_score": "score"}
+    # Stage-1 baseline score before filtering feature columns
+    stage1_score_col = next(
+        (col for col in ("bm25_score", "score", "rrf_score") if col in val_feat.columns),
+        None,
     )
-    bm25_val_ranking = evaluate_ranking(bm25_val_scored, ks=[10])
+    if stage1_score_col is not None:
+        stage1_val_scored = val_feat[["query_id", stage1_score_col, "relevance"]].rename(
+            columns={stage1_score_col: "score"}
+        )
+        stage1_val_ranking = evaluate_ranking(stage1_val_scored, ks=[10])
+    else:
+        stage1_val_ranking = {}
+
+    selected_cols = _resolve_selected_features(
+        df=train_feat,
+        config=config,
+        feature_cols=feature_cols,
+        target_col="relevance",
+    )
+    train_feat_sel = _subset_feature_df(train_feat, selected_cols, target_col="relevance")
+    val_feat_sel = _subset_feature_df(val_feat, selected_cols, target_col="relevance")
 
     try:
         trained = train_ranker(
-            train_df=train_feat,
-            val_df=val_feat,
-            params=model_params,
+            train_df=train_feat_sel,
+            val_df=val_feat_sel,
+            feature_cols=selected_cols,
+            target_col="relevance",
+            model_name=selected_model_name,
+            cfg=config,
         )
     except TypeError:
         trained = train_ranker(
-            train_df=train_feat,
-            val_df=val_feat,
+            train_df=train_feat_sel,
+            val_df=val_feat_sel,
+            params=model_params,
         )
 
     if isinstance(trained, tuple) and len(trained) == 3:
@@ -171,7 +296,7 @@ def run_training_pipeline(
     else:
         raise ValueError("Unexpected return value from train_ranker")
 
-    val_scored = score_candidates(ranker, val_feat, feat_cols)
+    val_scored = score_candidates(ranker, val_feat_sel, feat_cols)
     ranker_val_ranking = evaluate_ranking(val_scored, ks=[10])
 
     output = _resolve_model_path(model_path, selected_model_name, config)
@@ -179,14 +304,16 @@ def run_training_pipeline(
     try:
         save_ranker(ranker, feat_cols, output, meta=ranker_meta)
     except TypeError:
-        save_ranker(ranker, feat_cols, output)  
+        save_ranker(ranker, feat_cols, output)
 
     return {
         "model_path": str(output),
         "model_name": selected_model_name,
+        "retrieval_mode": resolved_mode,
         "top_k": resolved_top_k,
+        "selected_features": feat_cols,
         "num_features": len(feat_cols),
         "val_retrieval": val_retrieval_metrics,
-        "val_bm25_ranking": bm25_val_ranking,
+        "val_bm25_ranking": stage1_val_ranking,
         "val_ranker_ranking": ranker_val_ranking,
     }
